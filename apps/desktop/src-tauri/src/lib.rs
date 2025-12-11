@@ -1,7 +1,9 @@
 mod adb;
 mod commands;
 
-use tauri::Manager;
+use crate::adb::set_bundled_adb_path;
+use std::path::PathBuf;
+use tauri::{path::BaseDirectory, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,6 +32,38 @@ pub fn run() {
         {
           // Windows: 禁用原生装饰，使用自定义标题栏
           let _ = window.set_decorations(false);
+        }
+      }
+
+      #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+      {
+        let resolver = app.path();
+
+        #[cfg(target_os = "macos")]
+        let adb_relative_path = "adb/adb";
+        #[cfg(target_os = "windows")]
+        let adb_relative_path = "adb/adb.exe";
+        #[cfg(target_os = "linux")]
+        let adb_relative_path = "adb/adb";
+
+        let resolved_path = resolver
+          .resolve(adb_relative_path, BaseDirectory::Resource)
+          .ok()
+          .filter(|p| p.exists())
+          .or_else(|| {
+            let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            path.push("resources");
+            path.push(adb_relative_path);
+            if path.exists() {
+              Some(path)
+            } else {
+              None
+            }
+          });
+
+        if let Some(path) = resolved_path {
+          println!("Bundled ADB path resolved: {}", path.display());
+          set_bundled_adb_path(Some(path.to_string_lossy().to_string()));
         }
       }
 

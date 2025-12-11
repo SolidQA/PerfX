@@ -1,77 +1,46 @@
 use crate::adb::error::{AdbError, Result};
 use once_cell::sync::OnceCell;
 use std::{
+  path::Path,
   process::{Command, Stdio},
   sync::Mutex,
 };
 
 #[derive(Debug, Clone)]
 pub struct AdbBinary {
-  pub path: Option<String>,
+  pub custom: Option<String>,
+  pub bundled: Option<String>,
 }
 
 static ADB_BIN: OnceCell<Mutex<AdbBinary>> = OnceCell::new();
 
 fn adb_bin() -> &'static Mutex<AdbBinary> {
-  ADB_BIN.get_or_init(|| Mutex::new(AdbBinary { path: None }))
+  ADB_BIN.get_or_init(|| Mutex::new(AdbBinary { custom: None, bundled: None }))
 }
 
 pub fn set_adb_path(path: Option<String>) {
   if let Ok(mut guard) = adb_bin().lock() {
-    guard.path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+    guard.custom = normalize_path(path);
+  }
+}
+
+pub fn set_bundled_adb_path(path: Option<String>) {
+  if let Ok(mut guard) = adb_bin().lock() {
+    guard.bundled = normalize_path(path).filter(|p| Path::new(p).exists());
   }
 }
 
 pub fn current_adb_path() -> String {
-  // 首先检查手动设置的路径
-  if let Some(path) = adb_bin().lock().ok().and_then(|cfg| cfg.path.clone()) {
-    return path;
-  }
-
-  // 尝试自动查找ADB路径
-  if let Ok(path) = find_adb_path() {
-    return path;
-  }
-
-  // 默认使用adb命令
-  "adb".to_string()
+  resolve_adb_path().unwrap_or_else(|_| "adb".to_string())
 }
 
-fn find_adb_path() -> Result<String> {
-  // 常见的ADB安装路径
-  let possible_paths = [
-    "/usr/local/bin/adb",
-    "/opt/homebrew/bin/adb",
-    "/usr/bin/adb",
-    "/bin/adb",
-    // Android Studio默认路径
-    "/Users/caishilong/Library/Android/sdk/platform-tools/adb",
-    "/Users/caishilong/Android/Sdk/platform-tools/adb",
-    // 系统PATH中的adb
-  ];
-
-  for path in &possible_paths {
-    if std::path::Path::new(path).exists() {
-      return Ok(path.to_string());
-    }
-  }
-
-  // 最后尝试which命令
-  match Command::new("which").arg("adb").output() {
-    Ok(output) if output.status.success() => {
-      let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-      if !path.is_empty() {
-        Ok(path)
-      } else {
-        Err(AdbError::NotFound)
-      }
-    }
-    _ => Err(AdbError::NotFound),
-  }
+fn normalize_path(path: Option<String>) -> Option<String> {
+  path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty())
 }
 
 pub fn run_host(args: &[&str]) -> Result<String> {
-  run_raw(&current_adb_path(), args)
+  let adb_path = resolve_adb_path()?;
+  run_raw(&adb_path, args)
 }
 
 pub fn run_device(device_id: &str, args: &[&str]) -> Result<String> {
@@ -79,7 +48,8 @@ pub fn run_device(device_id: &str, args: &[&str]) -> Result<String> {
   full.push("-s");
   full.push(device_id);
   full.extend_from_slice(args);
-  run_raw(&current_adb_path(), &full)
+  let adb_path = resolve_adb_path()?;
+  run_raw(&adb_path, &full)
 }
 
 fn run_raw(bin: &str, args: &[&str]) -> Result<String> {
@@ -103,6 +73,19 @@ fn run_raw(bin: &str, args: &[&str]) -> Result<String> {
   }
 
   Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn resolve_adb_path() -> Result<String> {
+  if let Ok(guard) = adb_bin().lock() {
+    if let Some(path) = guard.custom.clone() {
+      return Ok(path);
+    }
+    if let Some(path) = guard.bundled.clone() {
+      return Ok(path);
+    }
+  }
+
+  Err(AdbError::NotFound)
 }
 
 #[allow(dead_code)]

@@ -7,7 +7,7 @@ pub mod error;
 pub mod metrics;
 
 pub use app::list_apps;
-pub use command::set_adb_path;
+pub use command::{set_adb_path, set_bundled_adb_path};
 pub use device::list_devices;
 pub use metrics::{collect_metrics, MetricKey, MetricsSnapshot};
 
