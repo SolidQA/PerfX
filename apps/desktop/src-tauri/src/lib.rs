@@ -4,14 +4,28 @@ mod commands;
 use crate::adb::set_bundled_adb_path;
 use std::path::PathBuf;
 use tauri::{path::BaseDirectory, Manager};
+use tauri_plugin_log::{Target, TargetKind, WEBVIEW_TARGET};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_sql::Builder::default().build())
     .plugin(
-      tauri_plugin_log::Builder::default()
+      tauri_plugin_log::Builder::new()
         .level(log::LevelFilter::Info)
+        .max_file_size(5_000_000)
+        .clear_targets()
+        .targets([
+          Target::new(TargetKind::LogDir {
+            file_name: Some("webview".into())
+          })
+          .filter(|metadata| metadata.target().starts_with(WEBVIEW_TARGET)),
+          Target::new(TargetKind::LogDir {
+            file_name: Some("rust".into())
+          })
+          .filter(|metadata| !metadata.target().starts_with(WEBVIEW_TARGET)),
+          Target::new(TargetKind::Stdout),
+        ])
         .build(),
     )
     .invoke_handler(tauri::generate_handler![
@@ -62,7 +76,7 @@ pub fn run() {
           });
 
         if let Some(path) = resolved_path {
-          println!("Bundled ADB path resolved: {}", path.display());
+          log::info!("Bundled ADB path resolved: {}", path.display());
           set_bundled_adb_path(Some(path.to_string_lossy().to_string()));
         }
       }

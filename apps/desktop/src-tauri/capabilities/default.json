@@ -13,6 +13,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-title-bar-style",
     "core:window:allow-set-decorations",
+    "log:default",
     "sql:default",
     "sql:allow-execute"
   ]

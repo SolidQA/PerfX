@@ -2,6 +2,7 @@ use crate::adb::{
   collect_metrics, list_apps, list_devices, set_adb_path, AppInfo, DeviceInfo, MetricKey,
   MetricsSnapshot,
 };
+use log::{error, info};
 use serde::Deserialize;
 use tauri::async_runtime::spawn_blocking;
 
@@ -24,15 +25,15 @@ pub async fn tauri_list_devices() -> Result<Vec<DeviceInfo>, String> {
   spawn_blocking(|| {
     match list_devices() {
       Ok(devices) => {
-        println!("ADB设备搜索成功，找到 {} 个设备", devices.len());
+        info!("ADB设备搜索成功，找到 {} 个设备", devices.len());
         for device in &devices {
-          println!("设备: {} (状态: {}, 型号: {:?})", device.id, device.state, device.model);
+          info!("设备: {} (状态: {}, 型号: {:?})", device.id, device.state, device.model);
         }
         Ok(devices)
       }
       Err(e) => {
-        println!("ADB设备搜索失败: {:?}", e);
-        println!("当前ADB路径: {}", crate::adb::command::current_adb_path());
+        error!("ADB设备搜索失败: {:?}", e);
+        info!("当前ADB路径: {}", crate::adb::command::current_adb_path());
         Err(e)
       }
     }
