@@ -16,14 +16,27 @@ struct FpsHistory {
 
 static FPS_HISTORY: Lazy<Mutex<HashMap<String, FpsHistory>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
+#[derive(Debug, Clone)]
+struct TrafficHistory {
+  rx_bytes: u64,
+  tx_bytes: u64,
+  timestamp: u64,
+}
+
+static TRAFFIC_HISTORY: Lazy<Mutex<HashMap<String, TrafficHistory>>> =
+  Lazy::new(|| Mutex::new(HashMap::new()));
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum MetricKey {
   Fps,
   Cpu,
   Power,
   Memory,
   Network,
+  Battery,
+  BatteryTemp,
+  Traffic,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,9 +55,52 @@ pub struct MetricsSnapshot {
   pub memory_mb: Option<f64>,
   pub network_kbps: Option<f64>,
   #[serde(skip_serializing_if = "Option::is_none")]
+  pub network_bps: Option<f64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub rx_bytes: Option<u64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub tx_bytes: Option<u64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub rx_bps: Option<f64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub tx_bps: Option<f64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub battery_level: Option<f64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub battery_temp_c: Option<f64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub frame_stats: Option<FrameStats>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub raw: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct BatteryStats {
+  level: Option<f64>,
+  temp_c: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct TrafficStats {
+  rx_bytes: u64,
+  tx_bytes: u64,
+  rx_bps: Option<f64>,
+  tx_bps: Option<f64>,
+}
+
+impl TrafficStats {
+  fn total_bps(&self) -> Option<f64> {
+    match (self.rx_bps, self.tx_bps) {
+      (Some(rx), Some(tx)) => Some(rx + tx),
+      (Some(rx), None) => Some(rx),
+      (None, Some(tx)) => Some(tx),
+      _ => None,
+    }
+  }
+
+  fn total_kbps(&self) -> Option<f64> {
+    self.total_bps().map(|v| v / 1024.0)
+  }
 }
 
 pub fn collect_metrics(
@@ -53,11 +109,12 @@ pub fn collect_metrics(
   metrics: &[MetricKey],
 ) -> Result<MetricsSnapshot> {
   let mut snapshot = MetricsSnapshot::default();
-  let pid = if metrics.iter().any(|m| matches!(m, MetricKey::Cpu | MetricKey::Memory)) {
-    resolve_pid(device_id, package).ok()
-  } else {
-    None
-  };
+  let need_pid = metrics
+    .iter()
+    .any(|m| matches!(m, MetricKey::Cpu | MetricKey::Traffic));
+  let pid = if need_pid { resolve_pid(device_id, package).ok() } else { None };
+  let mut battery_stats: Option<BatteryStats> = None;
+  let mut traffic_stats: Option<TrafficStats> = None;
 
   for metric in metrics {
     match metric {
@@ -72,6 +129,21 @@ pub fn collect_metrics(
       MetricKey::Network => {
         snapshot.network_kbps = fetch_network(device_id).ok();
       }
+      MetricKey::Traffic => {
+        if traffic_stats.is_none() {
+          if let Some(ref pid) = pid {
+            traffic_stats = fetch_traffic(device_id, pid).ok();
+          }
+        }
+        if let Some(ref traffic) = traffic_stats {
+          snapshot.rx_bytes = Some(traffic.rx_bytes);
+          snapshot.tx_bytes = Some(traffic.tx_bytes);
+          snapshot.rx_bps = traffic.rx_bps;
+          snapshot.tx_bps = traffic.tx_bps;
+          snapshot.network_bps = traffic.total_bps();
+          snapshot.network_kbps = traffic.total_kbps().or(snapshot.network_kbps);
+        }
+      }
       MetricKey::Fps => {
         if let Ok(frame_stats) = fetch_fps(device_id, package) {
           snapshot.fps = Some(frame_stats.fps);
@@ -80,6 +152,15 @@ pub fn collect_metrics(
       }
       MetricKey::Power => {
         snapshot.power = fetch_power(device_id, package).ok();
+      }
+      MetricKey::Battery | MetricKey::BatteryTemp => {
+        if battery_stats.is_none() {
+          battery_stats = fetch_battery(device_id).ok();
+        }
+        if let Some(ref battery) = battery_stats {
+          snapshot.battery_level = battery.level;
+          snapshot.battery_temp_c = battery.temp_c;
+        }
       }
     }
   }
@@ -304,5 +385,104 @@ fn fetch_power(device_id: &str, package: &str) -> Result<f64> {
 
   // 如果都无法获取，返回 None 表示数据不可用
   Err(AdbError::ParseFailed("无法获取功耗数据".into()))
+}
+
+fn fetch_battery(device_id: &str) -> Result<BatteryStats> {
+  let raw = run_device(device_id, &["shell", "dumpsys", "battery"])?;
+  let mut level: Option<f64> = None;
+  let mut temp_c: Option<f64> = None;
+
+  for line in raw.lines() {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("level:") {
+      level = rest.trim().parse::<f64>().ok();
+    } else if let Some(rest) = line.strip_prefix("temperature:") {
+      if let Ok(raw_temp) = rest.trim().parse::<f64>() {
+        temp_c = Some(raw_temp / 10.0);
+      }
+    }
+  }
+
+  if level.is_none() && temp_c.is_none() {
+    return Err(AdbError::ParseFailed("未获取到电池信息".into()));
+  }
+
+  Ok(BatteryStats { level, temp_c })
+}
+
+fn fetch_traffic(device_id: &str, pid: &str) -> Result<TrafficStats> {
+  let raw = run_device(device_id, &["shell", "cat", &format!("/proc/{pid}/net/dev")])?;
+  let mut rx_bytes: u64 = 0;
+  let mut tx_bytes: u64 = 0;
+
+  for line in raw.lines() {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with("Inter-") || line.starts_with("face") {
+      continue;
+    }
+
+    let mut parts = line.split(':');
+    let iface = parts.next().unwrap_or("").trim();
+    let payload = parts.next().unwrap_or("").trim();
+
+    // 聚焦常见外网接口，跳过 lo
+    let interested = iface.starts_with("wlan")
+      || iface.starts_with("rmnet")
+      || iface.starts_with("ccmni")
+      || iface.starts_with("eth")
+      || iface.starts_with("usb")
+      || iface.starts_with("pdp")
+      || iface.starts_with("cell")
+      || iface.starts_with("rmnet_data");
+
+    if !interested || iface.starts_with("lo") {
+      continue;
+    }
+
+    let cols: Vec<&str> = payload.split_whitespace().collect();
+    if cols.len() >= 16 {
+      rx_bytes = rx_bytes.saturating_add(cols[0].parse::<u64>().unwrap_or(0));
+      tx_bytes = tx_bytes.saturating_add(cols[8].parse::<u64>().unwrap_or(0));
+    }
+  }
+
+  if rx_bytes == 0 && tx_bytes == 0 {
+    return Err(AdbError::ParseFailed("未找到可用网络接口".into()));
+  }
+
+  let now = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_millis() as u64;
+  let key = format!("{device_id}:{pid}");
+
+  let mut rx_bps = None;
+  let mut tx_bps = None;
+
+  if let Ok(mut history) = TRAFFIC_HISTORY.lock() {
+    if let Some(prev) = history.get(&key) {
+      let dt_ms = now.saturating_sub(prev.timestamp).max(1);
+      let rx_diff = rx_bytes.saturating_sub(prev.rx_bytes);
+      let tx_diff = tx_bytes.saturating_sub(prev.tx_bytes);
+      rx_bps = Some((rx_diff as f64) * 1000.0 / (dt_ms as f64));
+      tx_bps = Some((tx_diff as f64) * 1000.0 / (dt_ms as f64));
+    }
+
+    history.insert(
+      key,
+      TrafficHistory {
+        rx_bytes,
+        tx_bytes,
+        timestamp: now,
+      },
+    );
+  }
+
+  Ok(TrafficStats {
+    rx_bytes,
+    tx_bytes,
+    rx_bps,
+    tx_bps,
+  })
 }
 

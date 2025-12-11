@@ -96,7 +96,8 @@ type LineConfig = {
 
 type ChartItemProps = {
   title?: string
-  data: Array<Record<string, number>>
+  icon?: ReactNode
+  data: Array<Record<string, number | string>>
   xKey: string
   yDomain?: [number, number]
   lines: LineConfig[]
@@ -105,6 +106,7 @@ type ChartItemProps = {
 
 export function ChartItem({
   title,
+  icon,
   data,
   xKey,
   yDomain,
@@ -135,6 +137,39 @@ export function ChartItem({
       endIndex: toIndex(brush.end),
     }
   }, [brush, displayData.length])
+
+  const visibleData = useMemo(() => {
+    if (!displayData.length) return displayData
+    const start = Math.max(0, Math.min(displayData.length - 1, brushIndexRange.startIndex))
+    const end = Math.max(start, Math.min(displayData.length - 1, brushIndexRange.endIndex))
+    return displayData.slice(start, end + 1)
+  }, [brushIndexRange.endIndex, brushIndexRange.startIndex, displayData])
+
+  const stats = useMemo(
+    () =>
+      lines.map((line) => {
+        const values = visibleData
+          .map((item) => item[line.dataKey])
+          .filter((v) => typeof v === "number" && Number.isFinite(v)) as number[]
+
+        if (!values.length) {
+          return { key: line.dataKey, label: line.label, color: line.color, max: null, min: null, avg: null }
+        }
+
+        const max = Math.max(...values)
+        const min = Math.min(...values)
+        const avg = values.reduce((sum, v) => sum + v, 0) / values.length
+
+        return { key: line.dataKey, label: line.label, color: line.color, max, min, avg }
+      }),
+    [lines, visibleData]
+  )
+
+  const formatNumber = useCallback((value: number | null) => {
+    if (value === null || Number.isNaN(value)) return "—"
+    if (Math.abs(value) >= 100) return value.toFixed(0)
+    return value.toFixed(1)
+  }, [])
 
   useEffect(() => {
     // 如果数据长度变小导致刷选越界，做一次修正
@@ -182,7 +217,28 @@ export function ChartItem({
 
   return (
     <div className="space-y-1">
-      {title ? <div className="text-sm font-semibold">{title}</div> : null}
+      {title ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            {icon ? <span className="text-muted-foreground">{icon}</span> : null}
+            <span>{title}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+            {stats.map((stat) => (
+              <div key={stat.key} className="flex items-center gap-1">
+                <span
+                  className="inline-flex h-2 w-2 rounded-full"
+                  style={{ backgroundColor: `var(--color-${stat.key})` }}
+                />
+                <span className="text-xs text-foreground/80">{stat.label}</span>
+                <span className="font-medium text-foreground/80">
+                  max {formatNumber(stat.max)} / avg {formatNumber(stat.avg)} / min {formatNumber(stat.min)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <ChartContainer
         className="w-full rounded-md border bg-card/60 p-2"
         style={{ height }}

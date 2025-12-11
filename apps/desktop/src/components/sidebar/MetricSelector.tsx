@@ -6,7 +6,7 @@ const OPTIONS: { value: MetricKey; label: string }[] = [
   { value: "cpu", label: "CPU" },
   { value: "power", label: "耗能" },
   { value: "memory", label: "内存" },
-  { value: "network", label: "网络" },
+  { value: "traffic", label: "流量" },
 ]
 
 interface Props {
