@@ -2,7 +2,6 @@ import { useEffect, useState } from "react"
 
 const REPO = "SolidQA/PerfX"
 const STORAGE_KEY = "perfx:lastUpdateCheck"
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 type UpdateInfo = {
   hasUpdate: boolean
@@ -55,9 +54,6 @@ export function useUpdateCheck(currentVersion: string) {
       setChecking(false)
       return
     }
-
-    const last = Number(window.localStorage.getItem(STORAGE_KEY) || 0)
-    if (Date.now() - last < CHECK_INTERVAL_MS) return
 
     let canceled = false
     const run = async () => {
