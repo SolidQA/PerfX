@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+import { open } from "@tauri-apps/plugin-shell"
 import { Minus, Maximize2, X, Moon, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { getPlatform } from "@/lib/platform"
 import { useAppStore } from "@/stores/use-app-store"
+import { useUpdateCheck } from "@/hooks/useUpdateCheck"
 
 const appWindow = getCurrentWindow()
 
@@ -11,6 +13,7 @@ export function TitleBar() {
   const [platform, setPlatform] = useState<"macos" | "windows" | "linux">("macos")
   const { theme, setTheme, selectedDevice } = useAppStore()
   const version = __APP_VERSION__
+  const update = useUpdateCheck(version)
 
   useEffect(() => {
     getPlatform().then(setPlatform)
@@ -76,7 +79,23 @@ export function TitleBar() {
 
       {/* 右侧：操作按钮和 Windows 窗口控制按钮 */}
       <div className="flex items-center gap-1.5 pr-2" data-tauri-drag-region="no-drag">
-        <span className="mr-1 text-xs text-foreground/60 select-none">v{version}</span>
+        <div className="mr-1 flex items-center gap-1 text-xs text-foreground/60 select-none">
+          <span title={`当前版本 v${version}`}>v{version}</span>
+          {update.hasUpdate ? (
+            <button
+              type="button"
+              className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-500 cursor-pointer hover:bg-emerald-500/25 hover:text-emerald-400"
+              title={`发现新版本 v${update.latestVersion}`}
+              onClick={() => {
+                if (update.releaseUrl) {
+                  open(update.releaseUrl)
+                }
+              }}
+            >
+              有更新
+            </button>
+          ) : null}
+        </div>
         <Button
           variant="ghost"
           size="icon-sm"
