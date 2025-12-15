@@ -141,6 +141,51 @@ jobs:
           git tag "${tag}"
           git push origin "${tag}"
 
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          # 获取上次release的tag
+          git fetch --tags --force
+          last_tag=$(git tag -l "v*" --sort=-version:refname | sed -n '2p' || echo "")
+
+          echo "Last tag: $last_tag"
+          echo "Current version: v${VERSION}"
+
+          # 生成release notes
+          if [ -n "$last_tag" ]; then
+            echo "## 📋 更新内容" > release_notes.md
+            echo "" >> release_notes.md
+
+            # 获取所有commit标题
+            git log --pretty=format:"%s" "${last_tag}..HEAD" | while IFS= read -r commit; do
+              echo "- $commit" >> release_notes.md
+            done
+
+            # 计算总提交数
+            commit_count=$(git rev-list --count "${last_tag}..HEAD")
+            echo "## 📊 统计信息" >> release_notes.md
+            echo "- **提交数**: $commit_count" >> release_notes.md
+            echo "- **版本**: v${VERSION}" >> release_notes.md
+            echo "- **发布日期**: $(date +'%Y-%m-%d')" >> release_notes.md
+          else
+            echo "## 📋 更新内容" > release_notes.md
+            echo "" >> release_notes.md
+            echo "### 🎉 首次发布" >> release_notes.md
+            echo "这是项目的首次正式发布！" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "## 📊 统计信息" >> release_notes.md
+            echo "- **版本**: v${VERSION}" >> release_notes.md
+            echo "- **发布日期**: $(date +'%Y-%m-%d')" >> release_notes.md
+          fi
+
+          # 设置输出
+          {
+            echo "notes<<EOF"
+            cat release_notes.md
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         env:
@@ -148,6 +193,7 @@ jobs:
         with:
           tag_name: v${{ needs.prepare.outputs.version }}
           name: v${{ needs.prepare.outputs.version }}
+          body: ${{ steps.notes.outputs.notes }}
           files: |
             dist/macos/**/*.dmg
             dist/macos/**/*.app
