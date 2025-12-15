@@ -69,11 +69,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Update Tauri config version
-        run: |
-          jq --arg version "${{ needs.prepare.outputs.version }}" '.version = $version' apps/desktop/src-tauri/tauri.conf.json > tauri.conf.json.tmp
-          mv tauri.conf.json.tmp apps/desktop/src-tauri/tauri.conf.json
-          sed -i.bak "s/^version = \".*\"/version = \"${{ needs.prepare.outputs.version }}\"/" apps/desktop/src-tauri/Cargo.toml
+      - name: Update version in all config files
+        run: node .github/scripts/update-version.js ${{ needs.prepare.outputs.version }}
 
       - name: Build (tauri)
         working-directory: apps/desktop
