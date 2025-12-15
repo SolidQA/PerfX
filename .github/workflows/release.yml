@@ -26,17 +26,33 @@ jobs:
           pkg="apps/desktop/package.json"
           ver=$(jq -r '.version' "$pkg")
           IFS='.' read -r major minor patch <<<"$ver"
-          base="v${major}.${minor}"
+          base="${major}.${minor}"
 
           git fetch --tags --force
-          last_tag=$(git tag -l "${base}.*" --sort=-version:refname | head -n 1 || true)
 
-          if [ -z "$last_tag" ]; then
+          # 获取所有匹配的tag，按版本号排序
+          tags=$(git tag -l "v${base}.*" --sort=-version:refname || true)
+
+          if [ -z "$tags" ]; then
             next_patch=0
-            echo "No previous tag for ${base}, using patch=0"
+            echo "No previous tag for v${base}, using patch=0"
           else
+            # 获取最新的tag
+            last_tag=$(echo "$tags" | head -n 1)
+            echo "Found tags: $tags"
+            echo "Last tag: $last_tag"
+
+            # 计算从last_tag到HEAD的提交数
             next_patch=$(git rev-list "${last_tag}..HEAD" --count)
-            echo "Last tag: ${last_tag}, commits since tag: ${next_patch}"
+            echo "Commits since last tag: ${next_patch}"
+
+            # 如果没有新提交，patch+1
+            if [ "$next_patch" -eq 0 ]; then
+              # 解析当前tag的patch版本
+              current_patch=$(echo "$last_tag" | sed "s/v${base}\.//")
+              next_patch=$((current_patch + 1))
+              echo "No new commits, incrementing patch: ${next_patch}"
+            fi
           fi
 
           next="${major}.${minor}.${next_patch}"
